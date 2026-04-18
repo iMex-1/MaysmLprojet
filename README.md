@@ -1,58 +1,193 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Application de Gestion de Blog Laravel
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Application complète de gestion de blog développée avec Laravel, incluant l'authentification, les autorisations et un système de gestion de contenu.
 
-## About Laravel
+## Fonctionnalités
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+### Partie 2 : Relations Eloquent ✅
+- Migrations complètes pour users, posts, comments, tags et post_tag
+- Relation One-to-Many : User → Posts
+- Relation One-to-Many : Post → Comments
+- Relation Many-to-Many : Posts ↔ Tags
+- Table pivot post_tag avec clés étrangères
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+### Partie 3 : Authentification avec Breeze ✅
+- Laravel Breeze installable (voir INSTALLATION.md)
+- Champ `role` (admin/user) dans la table users
+- Dashboard protégé par authentification
+- Système de connexion/inscription complet
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+### Partie 4 : Autorisation (Gates & Policies) ✅
+- PostPolicy créée avec les méthodes d'autorisation
+- Un utilisateur peut modifier uniquement ses propres posts
+- Gate `delete-any-post` permettant aux admins de supprimer n'importe quel post
+- Utilisation de `@can` dans les vues Blade pour afficher les boutons conditionnellement
 
-## Learning Laravel
+### Partie 5 : Controllers & Views ✅
+- PostController avec toutes les méthodes RESTful :
+  - index() : Liste des posts avec pagination
+  - create() : Formulaire de création
+  - store() : Enregistrement avec validation
+  - show() : Affichage d'un post avec commentaires
+  - edit() : Formulaire d'édition
+  - update() : Mise à jour avec validation
+  - destroy() : Suppression
+- Vues Blade complètes :
+  - Layout principal (layouts/app.blade.php)
+  - Liste des posts (posts/index.blade.php)
+  - Formulaire de création (posts/create.blade.php)
+  - Formulaire d'édition (posts/edit.blade.php)
+  - Affichage d'un post (posts/show.blade.php)
+  - Dashboard utilisateur (dashboard.blade.php)
+  - Dashboard admin (admin/dashboard.blade.php)
+- Affichage des erreurs de validation dans toutes les vues
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+### Partie 6 : Routes ✅
+- Groupe de routes protégées par `auth` middleware
+- Routes RESTful pour les posts
+- Groupe de routes réservé aux admins avec prefix `/admin`
+- Middleware personnalisé `AdminMiddleware` pour vérifier le rôle admin
+- Organisation claire des routes par niveau d'accès
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Structure du Projet
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+```
+app/
+├── Http/
+│   ├── Controllers/
+│   │   ├── PostController.php (RESTful controller)
+│   │   └── UserController.php
+│   └── Middleware/
+│       └── AdminMiddleware.php (Middleware personnalisé)
+├── Models/
+│   ├── User.php (avec relations et méthode isAdmin())
+│   ├── Post.php (avec relations)
+│   ├── Comment.php (avec relations)
+│   └── Tag.php (avec relations)
+└── Policies/
+    └── PostPolicy.php (Autorisations pour les posts)
 
-## Agentic Development
+database/
+├── migrations/
+│   ├── 2026_04_18_090417_create_users_table.php
+│   ├── 2026_04_18_090426_create_posts_table.php
+│   ├── 2026_04_18_090435_create_comments_table.php
+│   ├── 2026_04_18_090444_create_tags_table.php
+│   └── 2026_04_18_090449_create_post_tag_table.php
+└── seeders/
+    ├── DatabaseSeeder.php
+    └── PostSeeder.php
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+resources/views/
+├── layouts/
+│   └── app.blade.php
+├── posts/
+│   ├── index.blade.php
+│   ├── create.blade.php
+│   ├── edit.blade.php
+│   └── show.blade.php
+├── admin/
+│   ├── dashboard.blade.php
+│   └── users.blade.php
+└── dashboard.blade.php
 
-```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+routes/
+└── web.php (Routes organisées par niveau d'accès)
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+## Installation
 
-## Contributing
+Consultez le fichier `INSTALLATION.md` pour les instructions détaillées d'installation.
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+### Résumé rapide
 
-## Code of Conduct
+```bash
+# 1. Installer les dépendances
+composer install
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+# 2. Configurer l'environnement
+cp .env.example .env
+php artisan key:generate
 
-## Security Vulnerabilities
+# 3. Installer Breeze
+composer require laravel/breeze --dev
+php artisan breeze:install blade
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+# 4. Installer NPM et compiler
+npm install
+npm run build
 
-## License
+# 5. Configurer la base de données
+php artisan migrate
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+# 6. Peupler la base de données (optionnel)
+php artisan db:seed
+
+# 7. Démarrer le serveur
+php artisan serve
+```
+
+## Comptes de Test
+
+Après avoir exécuté `php artisan db:seed` :
+
+- **Admin** : admin@example.com / password
+- **User** : user@example.com / password
+
+## Routes Principales
+
+### Routes Publiques
+- `GET /` : Redirection vers la liste des posts
+- `GET /posts` : Liste des posts
+- `GET /posts/{post}` : Affichage d'un post
+
+### Routes Authentifiées
+- `GET /dashboard` : Dashboard utilisateur
+- `GET /posts/create` : Formulaire de création
+- `POST /posts` : Enregistrement d'un post
+- `GET /posts/{post}/edit` : Formulaire d'édition
+- `PUT /posts/{post}` : Mise à jour d'un post
+- `DELETE /posts/{post}` : Suppression d'un post
+
+### Routes Admin
+- `GET /admin/dashboard` : Dashboard administrateur
+- `GET /admin/users` : Gestion des utilisateurs
+
+## Autorisations
+
+### Policies (PostPolicy)
+- `viewAny` : Tous les utilisateurs peuvent voir la liste
+- `view` : Tous les utilisateurs peuvent voir un post
+- `create` : Tous les utilisateurs authentifiés peuvent créer
+- `update` : Seul l'auteur peut modifier son post
+- `delete` : Seul l'auteur peut supprimer son post
+
+### Gates
+- `delete-any-post` : Seuls les admins peuvent supprimer n'importe quel post
+
+## Utilisation dans les Vues
+
+```blade
+{{-- Vérifier si l'utilisateur peut modifier --}}
+@can('update', $post)
+    <a href="{{ route('posts.edit', $post) }}">Modifier</a>
+@endcan
+
+{{-- Vérifier le gate admin --}}
+@if(Gate::allows('delete-any-post'))
+    <button>Supprimer (Admin)</button>
+@endif
+```
+
+## Technologies Utilisées
+
+- Laravel 13
+- PHP 8.3
+- Laravel Breeze (Authentification)
+- Blade (Templates)
+- SQLite (Base de données)
+- Vite (Build tool)
+
+## Licence
+
+MIT
