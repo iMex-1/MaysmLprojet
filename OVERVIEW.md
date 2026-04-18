@@ -1,21 +1,27 @@
-# Auth, Breeze & Policies — Overview
+# Auth, Breeze & Policies — Full Step-by-Step Overview
+
+> Note: Laravel Breeze is **not installed** as a package (`composer.json` has no `laravel/breeze`).
+> Auth was wired manually using Laravel's built-in session guard + Eloquent provider.
 
 ---
 
-## 1. Authentication Setup
+## Step 1 — Auth Configuration
 
-Laravel Breeze is **not installed** as a package here. Auth was wired manually using Laravel's built-in auth system (session guard + Eloquent provider).
+`config/auth.php`
 
-`config/auth.php` — default guard uses sessions with the `User` model:
+Defines the default guard (`web`) using sessions, backed by the `User` Eloquent model.
+
 ```php
+// config/auth.php
+
 'defaults' => [
-    'guard'     => 'web',       // session-based
-    'passwords' => 'users',
+    'guard'     => env('AUTH_GUARD', 'web'),
+    'passwords' => env('AUTH_PASSWORD_BROKER', 'users'),
 ],
 
 'guards' => [
     'web' => [
-        'driver'   => 'session',
+        'driver'   => 'session',   // stores auth state in the session
         'provider' => 'users',
     ],
 ],
@@ -23,114 +29,202 @@ Laravel Breeze is **not installed** as a package here. Auth was wired manually u
 'providers' => [
     'users' => [
         'driver' => 'eloquent',
-        'model'  => User::class,
+        'model'  => env('AUTH_MODEL', User::class), // App\Models\User
+    ],
+],
+
+'passwords' => [
+    'users' => [
+        'provider' => 'users',
+        'table'    => env('AUTH_PASSWORD_RESET_TOKEN_TABLE', 'password_reset_tokens'),
+        'expire'   => 60,    // token valid for 60 minutes
+        'throttle' => 60,    // 60 seconds between reset requests
     ],
 ],
 ```
 
-The `login`, `logout`, and `register` routes are expected to exist (referenced in the layout), likely provided by a manual auth scaffold or `Auth::routes()`.
-
 ---
 
-## 2. The User Model & Role System
+## Step 2 — Users Table Migration (role column)
 
-The `role` column on `users` drives all authorization logic.
+`database/migrations/2026_04_18_090417_create_users_table.php`
 
-Migration:
-```php
-$table->enum('role', ['admin', 'user'])->default('user');
-```
-
-Model helper:
-```php
-public function isAdmin(): bool
-{
-    return $this->role === 'admin';
-}
-```
-
-This single method is the foundation for both the middleware and the Gate.
-
----
-
-## 3. Protecting Routes with `auth` Middleware
-
-Routes are split into three tiers:
+The `role` enum column is the foundation of the entire authorization system.
 
 ```php
-// Tier 1 — public, no auth needed
-Route::get('/posts',        [PostController::class, 'index'])->name('posts.index');
-Route::get('/posts/{post}', [PostController::class, 'show'])->name('posts.show');
+// database/migrations/2026_04_18_090417_create_users_table.php
 
-// Tier 2 — any authenticated user
-Route::middleware(['auth'])->group(function () {
-    Route::get('/posts/create',      [PostController::class, 'create'])->name('posts.create');
-    Route::post('/posts',            [PostController::class, 'store'])->name('posts.store');
-    Route::get('/posts/{post}/edit', [PostController::class, 'edit'])->name('posts.edit');
-    Route::put('/posts/{post}',      [PostController::class, 'update'])->name('posts.update');
-    Route::delete('/posts/{post}',   [PostController::class, 'destroy'])->name('posts.destroy');
-    Route::get('/dashboard',         ...)->name('dashboard');
-});
-
-// Tier 3 — admins only (auth + admin middleware)
-Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(function () {
-    Route::get('/dashboard', ...)->name('admin.dashboard');
-    Route::get('/users',     ...)->name('admin.users');
+Schema::create('users', function (Blueprint $table) {
+    $table->id();
+    $table->string('name');
+    $table->string('email')->unique();
+    $table->timestamp('email_verified_at')->nullable();
+    $table->string('password');
+    $table->enum('role', ['admin', 'user'])->default('user'); // <-- drives all auth logic
+    $table->rememberToken();
+    $table->timestamps();
 });
 ```
 
-The controller also restricts at the constructor level as a second layer:
-```php
-public function __construct()
-{
-    $this->middleware('auth')->except(['index', 'show']);
-}
-```
-
 ---
 
-## 4. AdminMiddleware
+## Step 3 — User Model
 
-Registered as the `admin` alias in `bootstrap/app.php`:
-```php
-->withMiddleware(function (Middleware $middleware): void {
-    $middleware->alias([
-        'admin' => \App\Http\Middleware\AdminMiddleware::class,
-    ]);
-})
-```
+`app/Models/User.php`
 
-The middleware itself:
+Extends `Authenticatable` (required for Laravel's auth system). The `isAdmin()` helper is used by the middleware, Gate, and Blade views.
+
 ```php
-public function handle(Request $request, Closure $next): Response
+// app/Models/User.php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Attributes\Hidden;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
+
+#[Fillable(['name', 'email', 'password', 'role'])]
+#[Hidden(['password', 'remember_token'])]
+class User extends Authenticatable
 {
-    if (!auth()->check() || !auth()->user()->isAdmin()) {
-        abort(403, 'Accès refusé. Vous devez être administrateur.');
+    use HasFactory, Notifiable;
+
+    protected function casts(): array
+    {
+        return [
+            'email_verified_at' => 'datetime',
+            'password'          => 'hashed',  // auto-hashes on set
+        ];
     }
-    return $next($request);
+
+    public function posts()    { return $this->hasMany(Post::class); }
+    public function comments() { return $this->hasMany(Comment::class); }
+
+    // Used everywhere: middleware, Gate, Blade
+    public function isAdmin(): bool
+    {
+        return $this->role === 'admin';
+    }
 }
 ```
 
-It checks two things in order:
-1. Is the user logged in at all?
-2. Does `isAdmin()` return `true`?
+---
 
-If either fails → `403`.
+## Step 4 — Admin Middleware
+
+`app/Http/Middleware/AdminMiddleware.php`
+
+Blocks any request from non-admin users with a 403.
+
+```php
+// app/Http/Middleware/AdminMiddleware.php
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
+
+class AdminMiddleware
+{
+    public function handle(Request $request, Closure $next): Response
+    {
+        // Step 1: must be logged in
+        // Step 2: must have role = 'admin'
+        if (!auth()->check() || !auth()->user()->isAdmin()) {
+            abort(403, 'Accès refusé. Vous devez être administrateur.');
+        }
+
+        return $next($request);
+    }
+}
+```
 
 ---
 
-## 5. PostPolicy
+## Step 5 — Registering the Middleware Alias
 
-Handles fine-grained ownership checks. Registered automatically via Laravel's auto-discovery.
+`bootstrap/app.php`
+
+The `admin` alias is registered here so it can be used in route definitions.
 
 ```php
+// bootstrap/app.php
+
+use Illuminate\Foundation\Application;
+use Illuminate\Foundation\Configuration\Exceptions;
+use Illuminate\Foundation\Configuration\Middleware;
+
+return Application::configure(basePath: dirname(__DIR__))
+    ->withRouting(
+        web:      __DIR__.'/../routes/web.php',
+        commands: __DIR__.'/../routes/console.php',
+        health:   '/up',
+    )
+    ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->alias([
+            'admin' => \App\Http\Middleware\AdminMiddleware::class, // <-- alias registered
+        ]);
+    })
+    ->withExceptions(function (Exceptions $exceptions): void {})
+    ->create();
+```
+
+---
+
+## Step 6 — Gate Definition (Admin Override)
+
+`app/Providers/AppServiceProvider.php`
+
+The `delete-any-post` Gate lets admins delete any post, bypassing ownership checks in the policy.
+
+```php
+// app/Providers/AppServiceProvider.php
+
+namespace App\Providers;
+
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\ServiceProvider;
+
+class AppServiceProvider extends ServiceProvider
+{
+    public function register(): void {}
+
+    public function boot(): void
+    {
+        // Admins can delete any post, regardless of who owns it
+        Gate::define('delete-any-post', function ($user) {
+            return $user->isAdmin();
+        });
+    }
+}
+```
+
+---
+
+## Step 7 — PostPolicy (Ownership Checks)
+
+`app/Policies/PostPolicy.php`
+
+Handles fine-grained per-resource authorization. Auto-discovered by Laravel — no manual registration needed.
+
+```php
+// app/Policies/PostPolicy.php
+
+namespace App\Policies;
+
+use App\Models\Post;
+use App\Models\User;
+
 class PostPolicy
 {
-    // Any authenticated user can view posts
+    // Any authenticated user can list or view posts
     public function viewAny(User $user): bool { return true; }
     public function view(User $user, Post $post): bool { return true; }
 
-    // Any authenticated user can create
+    // Any authenticated user can create a post
     public function create(User $user): bool { return true; }
 
     // Only the post owner can edit
@@ -139,104 +233,257 @@ class PostPolicy
         return $user->id === $post->user_id;
     }
 
-    // Only the post owner can delete (admins bypass this via Gate)
+    // Only the post owner can delete (admins use the Gate instead)
     public function delete(User $user, Post $post): bool
     {
         return $user->id === $post->user_id;
     }
 
-    public function restore(User $user, Post $post): bool    { return false; }
+    // Soft delete restore — disabled
+    public function restore(User $user, Post $post): bool     { return false; }
+
+    // Hard delete — disabled
     public function forceDelete(User $user, Post $post): bool { return false; }
 }
 ```
 
-Used in the controller with `$this->authorize()`:
-```php
-public function edit(Post $post)
-{
-    $this->authorize('update', $post); // throws 403 if not owner
-    return view('posts.edit', compact('post'));
-}
+---
 
-public function update(Request $request, Post $post)
+## Step 8 — PostController (Auth + Policy in Action)
+
+`app/Http/Controllers/PostController.php`
+
+This is where all the auth layers come together.
+
+```php
+// app/Http/Controllers/PostController.php
+
+namespace App\Http\Controllers;
+
+use App\Models\Post;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
+
+class PostController extends Controller
 {
-    $this->authorize('update', $post);
-    // ...
+    // Constructor-level middleware: all actions require auth except index & show
+    public function __construct()
+    {
+        $this->middleware('auth')->except(['index', 'show']);
+    }
+
+    // PUBLIC — no auth needed
+    public function index()
+    {
+        $posts = Post::with(['user', 'comments'])->latest()->paginate(10);
+        return view('posts.index', compact('posts'));
+    }
+
+    // PUBLIC — no auth needed
+    public function show(Post $post)
+    {
+        $post->load(['user', 'comments.user', 'tags']);
+        return view('posts.show', compact('post'));
+    }
+
+    // AUTH REQUIRED — policy: any authenticated user can create
+    public function create()
+    {
+        $this->authorize('create', Post::class);
+        return view('posts.create');
+    }
+
+    // AUTH REQUIRED — validates input, creates post under current user
+    public function store(Request $request)
+    {
+        $this->authorize('create', Post::class);
+
+        $validated = $request->validate([
+            'title'   => 'required|string|max:255',
+            'content' => 'required|string',
+        ]);
+
+        $post = $request->user()->posts()->create($validated);
+
+        return redirect()->route('posts.show', $post)
+            ->with('success', 'Post créé avec succès!');
+    }
+
+    // AUTH REQUIRED — policy: only owner can edit
+    public function edit(Post $post)
+    {
+        $this->authorize('update', $post); // throws 403 if not owner
+        return view('posts.edit', compact('post'));
+    }
+
+    // AUTH REQUIRED — policy: only owner can update
+    public function update(Request $request, Post $post)
+    {
+        $this->authorize('update', $post);
+
+        $validated = $request->validate([
+            'title'   => 'required|string|max:255',
+            'content' => 'required|string',
+        ]);
+
+        $post->update($validated);
+
+        return redirect()->route('posts.show', $post)
+            ->with('success', 'Post mis à jour avec succès!');
+    }
+
+    // AUTH REQUIRED — Gate (admin) OR policy (owner) can delete
+    public function destroy(Post $post)
+    {
+        if (Gate::allows('delete-any-post') || $this->authorize('delete', $post)) {
+            $post->delete();
+            return redirect()->route('posts.index')
+                ->with('success', 'Post supprimé avec succès!');
+        }
+
+        abort(403);
+    }
 }
 ```
 
 ---
 
-## 6. Gate — Admin Override for Delete
+## Step 9 — Routes (Three Access Tiers)
 
-Defined in `AppServiceProvider::boot()`, this Gate lets admins delete any post, bypassing the ownership check in `PostPolicy`:
+`routes/web.php`
 
 ```php
-Gate::define('delete-any-post', function ($user) {
-    return $user->isAdmin();
+// routes/web.php
+
+use App\Http\Controllers\PostController;
+use Illuminate\Support\Facades\Route;
+
+// ── TIER 1: Public ────────────────────────────────────────────────────────────
+Route::get('/', fn() => redirect()->route('posts.index'));
+Route::get('/posts',        [PostController::class, 'index'])->name('posts.index');
+Route::get('/posts/{post}', [PostController::class, 'show'])->name('posts.show');
+
+// ── TIER 2: Authenticated users ───────────────────────────────────────────────
+Route::middleware(['auth'])->group(function () {
+
+    Route::get('/posts/create',      [PostController::class, 'create'])->name('posts.create');
+    Route::post('/posts',            [PostController::class, 'store'])->name('posts.store');
+    Route::get('/posts/{post}/edit', [PostController::class, 'edit'])->name('posts.edit');
+    Route::put('/posts/{post}',      [PostController::class, 'update'])->name('posts.update');
+    Route::delete('/posts/{post}',   [PostController::class, 'destroy'])->name('posts.destroy');
+
+    Route::get('/dashboard', function () {
+        $posts = auth()->user()->posts()->with('comments')->latest()->get();
+        return view('dashboard', compact('posts'));
+    })->name('dashboard');
+});
+
+// ── TIER 3: Admins only (auth + admin middleware) ─────────────────────────────
+Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(function () {
+
+    Route::get('/dashboard', function () {
+        $stats = [
+            'total_users'    => \App\Models\User::count(),
+            'total_posts'    => \App\Models\Post::count(),
+            'total_comments' => \App\Models\Comment::count(),
+            'recent_posts'   => \App\Models\Post::with('user')->latest()->take(5)->get(),
+        ];
+        return view('admin.dashboard', compact('stats'));
+    })->name('dashboard');
+
+    Route::get('/users', function () {
+        $users = \App\Models\User::withCount('posts')->latest()->paginate(20);
+        return view('admin.users', compact('users'));
+    })->name('users');
 });
 ```
 
-Used in `destroy()` alongside the policy:
-```php
-public function destroy(Post $post)
-{
-    // Admin can delete anything, owner can delete their own
-    if (Gate::allows('delete-any-post') || $this->authorize('delete', $post)) {
-        $post->delete();
-        return redirect()->route('posts.index')->with('success', 'Post supprimé!');
-    }
-    abort(403);
-}
-```
-
 ---
 
-## 7. Layout — Auth-Aware Navigation
+## Step 10 — Auth-Aware Layout (Blade)
 
-The Blade layout conditionally renders nav links based on auth state and role:
+`resources/views/layouts/app.blade.php`
+
+The nav conditionally renders based on auth state and role.
 
 ```blade
-@auth
-    <a href="{{ route('posts.create') }}">Créer un post</a>
+{{-- resources/views/layouts/app.blade.php --}}
 
-    @if(auth()->user()->isAdmin())
-        <a href="{{ route('admin.dashboard') }}">Admin</a>
+<nav>
+    <div class="container">
+        <div>
+            <a href="{{ route('posts.index') }}">Blog</a>
+
+            @auth
+                {{-- Only shown to logged-in users --}}
+                <a href="{{ route('posts.create') }}">Créer un post</a>
+
+                @if(auth()->user()->isAdmin())
+                    {{-- Only shown to admins --}}
+                    <a href="{{ route('admin.dashboard') }}">Admin</a>
+                @endif
+            @endauth
+        </div>
+
+        <div>
+            @auth
+                <span>{{ auth()->user()->name }}</span>
+
+                {{-- Logout must be POST + CSRF protected --}}
+                <form action="{{ route('logout') }}" method="POST" style="display: inline;">
+                    @csrf
+                    <button type="submit" class="btn">Déconnexion</button>
+                </form>
+            @else
+                {{-- Shown to guests only --}}
+                <a href="{{ route('login') }}">Connexion</a>
+                <a href="{{ route('register') }}">Inscription</a>
+            @endauth
+        </div>
+    </div>
+</nav>
+
+{{-- Flash messages --}}
+<div class="container">
+    @if(session('success'))
+        <div class="alert alert-success">{{ session('success') }}</div>
     @endif
 
-    <form action="{{ route('logout') }}" method="POST" style="display: inline;">
-        @csrf
-        <button type="submit" class="btn">Déconnexion</button>
-    </form>
-@else
-    <a href="{{ route('login') }}">Connexion</a>
-    <a href="{{ route('register') }}">Inscription</a>
-@endauth
-```
+    @if(session('error'))
+        <div class="alert alert-danger">{{ session('error') }}</div>
+    @endif
 
-- `@auth` / `@else` — shows different nav for guests vs logged-in users
-- `isAdmin()` check — only admins see the Admin link
-- Logout uses a `POST` form with `@csrf` as required by Laravel
+    @yield('content')
+</div>
+```
 
 ---
 
-## 8. Auth Flow Summary
+## Full Auth Flow
 
 ```
-Request
-  │
-  ├── public route?  ──────────────────────────────► Controller (no checks)
-  │
-  ├── auth middleware ──► not logged in? ──► redirect to /login
-  │        │
-  │        └── logged in ──► Controller
-  │                              │
-  │                              └── authorize() ──► PostPolicy
-  │                                      │
-  │                                      ├── owner? ──► allowed
-  │                                      └── not owner? ──► 403
-  │
-  └── admin middleware ──► not admin? ──► 403
-           │
-           └── admin ──► Admin Controller / closure
+Incoming Request
+│
+├── /posts  or  /posts/{id}
+│     └── Public — no checks, straight to controller
+│
+├── /posts/create  /posts/{id}/edit  etc.
+│     └── auth middleware
+│           ├── not logged in → redirect to /login
+│           └── logged in → PostController
+│                               └── $this->authorize('update'/'delete', $post)
+│                                         ├── owner (user_id match) → allowed
+│                                         └── not owner → 403
+│
+├── /posts/{id} DELETE
+│     └── auth middleware → PostController::destroy()
+│                               ├── Gate::allows('delete-any-post') → admin? → allowed
+│                               └── $this->authorize('delete', $post) → owner? → allowed
+│                                                                         else → 403
+│
+└── /admin/*
+      └── auth middleware → AdminMiddleware
+                                ├── not logged in → 403
+                                ├── not admin     → 403
+                                └── admin         → admin route/view
 ```
